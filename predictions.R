@@ -63,13 +63,59 @@ edx <- rbind(edx, removed)
 
 rm(dl, ratings, movies, test_index, temp, movielens, removed)
 
-#----------------------------#
+#-------------------------------#
+# Save myself some time and save the imported data sets locally
+library(readr)
+library(tidyverse)
+library(caret)
 
+write_csv(edx, "./MainData.csv")
+write_csv(final_holdout_test, "./FinalHoldout.csv")
+
+#read the datasets
+edx <- read.csv("./MainData.csv")
+final_holdout_test <- read.csv("./FinalHoldout.csv")
+#----------------------------#
+if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+#if(!require(GGally)) install.packages("GGally", repos = "http://cran.us.r-project.org")
+
+library(ggplot2)
+#library(GGally)
 #create test sets (bootstrap maybe?)
+ind <- createDataPartition(edx$timestamp, times = 1, p = .2, list=FALSE)
+train <- edx %>% slice(-ind)
+test <- edx %>% slice(ind)
+
+
+#basic model using avg rating for the movie,  rounded to nearest 0.5
+#accuracy 0.2256885
+avg_ratings_by_movie <- train %>% group_by(movieId) %>% summarize(avg = round(mean(rating)*2)/2)
+inner_join(test,avg_ratings_by_movie, by = 'movieId') %>% na.omit() %>%
+  summarise(mean(avg == rating))
+
+#basic model using user's avg ratings
+#accuracy 0.2049525
+avg_ratings_by_user <- train %>% group_by(userId) %>% summarize(avg = round(mean(rating)*2)/2)
+inner_join(test,avg_ratings_by_user, by = 'userId') %>% na.omit() %>%
+  summarise(mean(avg == rating))
+
+
+One is using Bayesian Average. Two is using bias or lambda that I learned in Chapter 33.7.5 or Section 6 of the Machine Learning.  I applied bias 3 different ways: userId, movieId and rating.  I did not use a matrix.  
+
+#looking in general for connections, ignoring title and generes for time sake
+#took about 20 min using ggally, no new info than what was in the course
+#miniInd <- createDataPartition(train$timestamp, times = 1, p = .01, list=FALSE)
+#miniset <- train %>% select(-c(title,genres)) %>% slice(miniInd)
+#ggpairs(miniset)
+
+
+#possibly split up generes into their own columns
+
 #train models
 #run predictions
 #check RMSE
-#pick best model
+#crossvalidate
+#pick best model and refit for all of edx
 #final dataset check
 #create report file and pdf
 
