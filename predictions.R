@@ -4,17 +4,16 @@
 
 # Note: this process could take a couple of minutes
 
-if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
-if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
-if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
-if(!require(kamila)) install.packages("kamila", repos = "http://cran.us.r-project.org")
-if(!require(splitstackshape)) install.packages("splitstackshape", repos = "http://cran.us.r-project.org")
+if(!require(tidyverse)) install.packages("tidyverse", repos = "https://cran.rstudio.com/")
+if(!require(caret)) install.packages("caret", repos = "https://cran.rstudio.com/")
+if(!require(kamila)) install.packages("kamila", repos = "https://cran.rstudio.com/")
 
 library(splitstackshape)
 library(tidyverse)
 library(caret)
 library(ggplot2)
 library(kamila)
+library(readr)
 
 # MovieLens 10M dataset:
 # https://grouplens.org/datasets/movielens/10m/
@@ -75,39 +74,13 @@ rm(dl, ratings, movies, test_index, temp, movielens, removed, movies_file, ratin
 # library(tidyverse)
 # library(caret)
 # 
-# #write_csv(edx, "./MainData.csv")
-# #write_csv(final_holdout_test, "./FinalHoldout.csv")
+ #write_csv(edx, "./MainData.csv")
+ #write_csv(final_holdout_test, "./FinalHoldout.csv")
 # 
 # #read the datasets
-# edx <- read.csv("./MainData.csv")
+ edx <- read.csv("./MainData.csv")
 # #final_holdout_test <- read.csv("./FinalHoldout.csv")
-# #----------------------------#
-# if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
-# if(!require(elasticnet)) install.packages("elasticnet", repos = "http://cran.us.r-project.org")
-# if(!require(cluster)) install.packages("cluster", repos = "http://cran.us.r-project.org")
-# if(!require(factoextra)) install.packages("factoextra", repos = "http://cran.us.r-project.org")
-# if(!require(rsample)) install.packages("rsample", repos = "http://cran.us.r-project.org")
-# 
-# if(!require(recipes)) install.packages("recipes", repos = "http://cran.us.r-project.org")
-# if(!require(kernlab)) install.packages("kernlab", repos = "http://cran.us.r-project.org")
-# if(!require(gbm)) install.packages("gbm", repos = "http://cran.us.r-project.org")
-# if(!require(kamila)) install.packages("kamila", repos = "http://cran.us.r-project.org")
-# 
-# 
-# 
-# # Modeling packages
-# library(cluster)     # for general clustering algorithms
-# library(factoextra)  # for visualizing cluster results
-# library(ggplot2)
-# library(elasticnet)
-# library(rsample)    #for creating splits
-# 
-# library(recipes)    #for minor feature engineering tasks
-# library(kernlab)    #for minor feature engineering tasks
-# library(gbm)
-# library(kamila)   
-# library(lubridate)
-
+# #--------------------------------------------------------------------#
 
 
 set.seed(2006)
@@ -144,7 +117,7 @@ RMSE(testing$rating, mu)
 #RMSE 0.9441609
 avg_ratings_by_movie <- training %>% group_by(movieId) %>% 
   summarize(b_i = mean(rating) - mu,
-            n = sum(rating),
+            n = n(),
             sums = sum(rating - mu))
 inner_join(testing,avg_ratings_by_movie, by = 'movieId') %>% 
   summarize(RMSE = RMSE(rating, b_i + mu))
@@ -153,7 +126,9 @@ inner_join(testing,avg_ratings_by_movie, by = 'movieId') %>%
 #basic model using avg rating by user
 #RMSE 0.9790784
 avg_ratings_by_user <- training %>% group_by(userId) %>% 
-  summarize(b_u = mean(rating) - mu)
+  summarize(b_u = mean(rating) - mu,
+            n = n(),
+            sums = sum(rating - mu))
 inner_join(testing, avg_ratings_by_user, by = 'userId') %>% 
   summarize(RMSE = RMSE(rating, b_u + mu)) 
 
@@ -166,7 +141,7 @@ left_join(testing, avg_ratings_by_movie, by = "movieId") %>%
 
 
 #finding the best lambda for smoothing movie effect
-lambdas <- seq(0, 1, 0.025)
+lambdas <- seq(0, 3, 0.05)
 avg_ratings_by_movie$b_i_reg = 0
 rmses <- sapply(lambdas, function(lambda){
   avg_ratings_by_movie$b_i_reg <- avg_ratings_by_movie$sums / (avg_ratings_by_movie$n + lambda)
@@ -175,7 +150,7 @@ rmses <- sapply(lambdas, function(lambda){
     pull(rmse)
 })
 #regularized movie effect
-#best lambda 0.125
+#best lambda 2
 qplot(lambdas, rmses, geom = "line")
 lambda <- lambdas[which.min(rmses)]
 print(lambda)
@@ -184,19 +159,38 @@ avg_ratings_by_movie$b_i_reg <- avg_ratings_by_movie$sums / (avg_ratings_by_movi
 #HERE--------------------
 
 #adjust b_u to new b_i
-avg_ratings_by_user <- left_join(training, avg_ratings_by_movie, by = "movieId") %>%
+avg_ratings_by_user2 <- left_join(training, avg_ratings_by_movie, by = "movieId") %>%
                                    group_by(userId) %>% 
-                                   summarize(b_u = mean(rating) - mu - b_i_reg)
+                                   summarize(b_u = mean(rating) - mu - first(b_i_reg))
 
 #reg movie + user effect effect
-#RMSE 0.8667424
+#RMSE 0.8863579
 user_movie_model <- left_join(testing, avg_ratings_by_movie, by = "movieId") 
-
-user_movie_model <- left_join(user_movie_model, avg_ratings_by_user, by = "userId") %>% 
-  mutate(pred = mu + b_i_reg + b_u)
-user_movie_model %>% 
+gc() #frees up memory for next command, takes a couple min
+left_join(user_movie_model, avg_ratings_by_user, by = "userId") %>% 
+  mutate(pred = mu + b_i_reg + b_u) %>%
   summarize(rmse = RMSE(rating, pred))
 
+
+
+lambdas <- seq(3, 6, 0.05)
+avg_ratings_by_user$b_u_reg = 0
+rmses <- sapply(lambdas, function(lambda){
+  avg_ratings_by_user$b_u_reg <- avg_ratings_by_user$sums / (avg_ratings_by_user$n + lambda)
+  left_join(testing, avg_ratings_by_user, by = "userId") %>% mutate(pred = mu + b_u_reg) %>% 
+    summarize(rmse = RMSE(rating, pred)) %>%
+    pull(rmse)
+})
+#regularized movie effect
+#best lambda 5.4
+qplot(lambdas, rmses, geom = "line")
+lambda <- lambdas[which.min(rmses)]
+print(lambda)
+avg_ratings_by_user$b_u_reg <- avg_ratings_by_user$sums / (avg_ratings_by_user$n + lambda)
+#RMSE 0.8842069
+left_join(user_movie_model, avg_ratings_by_user, by = "userId") %>% 
+  mutate(pred = mu + b_i_reg + b_u_reg) %>%
+  summarize(rmse = RMSE(rating, pred))
 
 
 
@@ -206,16 +200,16 @@ user_movie_model %>%
 #test with a variety of K, min 41
 #seems to level out around 30 for speeds sake, may force later
 #RMSE 1.113 on seed(1)
-b <- 5
-control <- trainControl(method = "cv", number = b, p = .9)
+b <- 2
+control <- trainControl(method = "cv", number = b, p = .7)
 train_knn <- train(rating ~ ., 
-                   data = minitrain,
+                   data = training,
                    method = "knn", 
                    tuneGrid = data.frame(k = seq(1,60,2)),
                    trControl = control)
 train_knn$bestTune
 plot(train_knn)
-RMSE(predict(train_knn, minitest), minitest$rating)
+RMSE(predict(train_knn, testing), testing$rating)
 
 
 
