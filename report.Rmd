@@ -1,0 +1,62 @@
+---
+title: "Movielens Report"
+author: "Ariel Cooper"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# MovieLens Capstone
+
+[https://learning.edx.org/course/course-v1:HarvardX+PH125.9x+3T2023/block-v1:HarvardX+PH125.9x+3T2023+type\@sequential+block\@a8a6c69c3703470192c19bf7bc16175b/block-v1:HarvardX+PH125.9x+3T2023+type\@vertical+block\@2e16a21245a04cfd891ed49c1a4c5874](https://learning.edx.org/course/course-v1:HarvardX+PH125.9x+3T2023/block-v1:HarvardX+PH125.9x+3T2023+type@sequential+block@a8a6c69c3703470192c19bf7bc16175b/block-v1:HarvardX+PH125.9x+3T2023+type@vertical+block@2e16a21245a04cfd891ed49c1a4c5874){.uri}
+
+## Background
+
+When streaming shows online, there will be the ubiquitous recommendations for what to watch next. Your recommendation will be customized to you enticing you to watch more, so the streaming service benefits by getting you to watch more of their content. In 2006, Netflix released a challenge to beat their current algorithms by at least 10%. To the winner would go a prize of \$1,000,000.
+
+To create the recommendations, challengers were given a training set of data, which included information such as, but not limited to, a user ID, movie title, and a rating from 1-5. After training the algorithm, participants would send the model back to Netflix where they would test against another data set where it would try to predict the true ratings users gave. The benchmark against this would be measured would be root mean squared error (RMSE), with the goal to reduce this as much as possible.
+
+RMSE what is it and how it is calculated?
+
+What data we have been provided
+
+## Exploring the Data
+
+1.  a **methods/analysis** section that explains the process and techniques used, including data cleaning, data exploration and visualization, insights gained, and your modeling approach
+
+2.  a **results** section that presents the modeling results and discusses the model performance
+
+3.  a **conclusion** section that gives a brief summary of the report, its limitations and future work
+
+## Methods tried
+
+## Movie Bias
+
+## User Bias
+
+## Kamila
+
+## KNN
+
+## Results
+
+Conclusion
+
+hat includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
