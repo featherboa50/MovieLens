@@ -7,6 +7,7 @@
 if(!require(tidyverse)) install.packages("tidyverse", repos = "https://cran.rstudio.com/")
 if(!require(caret)) install.packages("caret", repos = "https://cran.rstudio.com/")
 if(!require(kamila)) install.packages("kamila", repos = "https://cran.rstudio.com/")
+if(!require(recipes)) install.packages("kamila", repos = "https://cran.rstudio.com/")
 
 library(splitstackshape)
 library(tidyverse)
@@ -14,6 +15,7 @@ library(caret)
 library(ggplot2)
 library(kamila)
 library(readr)
+library(recipes)
 
 # MovieLens 10M dataset:
 # https://grouplens.org/datasets/movielens/10m/
@@ -196,54 +198,37 @@ left_join(user_movie_model, avg_ratings_by_user, by = "userId") %>%
 
 #-------------------------------------------------
 
-#knn method with mini set, cross validates 5x with 10% of data
-#test with a variety of K, min 41
-#seems to level out around 30 for speeds sake, may force later
-#RMSE 1.113 on seed(1)
-b <- 2
-control <- trainControl(method = "cv", number = b, p = .7)
-train_knn <- train(rating ~ ., 
-                   data = training,
-                   method = "knn", 
-                   tuneGrid = data.frame(k = seq(1,60,2)),
-                   trControl = control)
-train_knn$bestTune
-plot(train_knn)
-RMSE(predict(train_knn, testing), testing$rating)
-
 
 
 #cooking with gas
-my_recipe <- recipe(rating ~ ., data = minitrain) %>%
-  update_role(title, new_role = "ID") %>% #sets the title feature to be kept but not used for modeling
-  step_dummy(genres, one_hot = TRUE)  #One Hot encoding the genres
+my_recipe <- recipe(rating ~ ., data = training) %>%
+  update_role(title, new_role = "ID") %>%
+  update_role(genres, new_role = "ID")   #sets the title feature to be kept but not used for modeling
+#  step_dummy(genres, one_hot = TRUE)  #One Hot encoding the genres
   
   my_recipe
   summary(my_recipe) 
-full_recipe <- recipe(rating ~ ., data = training) %>%
-  update_role(title, new_role = "ID") #sets the title feature to be kept but not used for modeling
-  
 
-train_data <- prep(my_recipe, training = minitrain, retain = TRUE) %>% juice() %>% as.h2o()
-test_data  <- bake(trained_recipe, new_data = minitest)
-#ref https://topepo.github.io/caret/using-recipes-with-train.html#
 
 set.seed(888)
-#RMSE .917
-train_svm <- train(my_recipe, minitrain,
+#RMSE .917 9:10
+start <- sys.time()
+train_svm <- train(my_recipe, training,
                  method = "svmRadial", 
                  metric = "wRMSE",
                  maximize = FALSE,
                  tuneLength = 10)
+end <- sys.time()
 train_svm
 #RMSE 1.09 example of overfitting
-RMSE(predict(train_svm, minitest), minitest$rating)
+RMSE(predict(train_svm, testing), testing$rating)
+print(format(start, %H:%M) & " " & format(end, %H:%M))
 
 
 #RMSE .975
 b <- 5
 control <- trainControl(method = "cv", number = b, p = .9)
-train_Loess <- train(my_recipe, minitrain,
+train_Loess <- train(my_recipe, training,
                  method = "gamLoess",
                  #tuneGrid = data.frame(k = seq(1,60,2)),
                  trControl = control)
