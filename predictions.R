@@ -16,6 +16,7 @@ library(ggplot2)
 library(kamila)
 library(readr)
 library(recipes)
+library(lubridate)
 
 # MovieLens 10M dataset:
 # https://grouplens.org/datasets/movielens/10m/
@@ -35,7 +36,10 @@ movies_file <- "ml-10M100K/movies.dat"
 if(!file.exists(movies_file))
   unzip(dl, movies_file)
 
-ratings <- as.data.frame(str_split(read_lines(ratings_file), fixed("::"), simplify = TRUE),
+# ratings <- as.data.frame(str_split(read_lines(ratings_file), fixed("::"), simplify = TRUE),
+#                         stringsAsFactors = FALSE)
+# had to adjust due to fixed() erroring out
+ratings <- as.data.frame(str_split(read_lines(ratings_file), coll("::"), simplify = TRUE),
                          stringsAsFactors = FALSE)
 colnames(ratings) <- c("userId", "movieId", "rating", "timestamp")
 ratings <- ratings %>%
@@ -44,13 +48,18 @@ ratings <- ratings %>%
          rating = as.numeric(rating),
          timestamp = as.integer(timestamp))
 
-movies <- as.data.frame(str_split(read_lines(movies_file), fixed("::"), simplify = TRUE),
+# movies <- as.data.frame(str_split(read_lines(movies_file), fixed("::"), simplify = TRUE),
+#                        stringsAsFactors = FALSE)
+movies <- as.data.frame(str_split(read_lines(movies_file), coll("::"), simplify = TRUE),
                         stringsAsFactors = FALSE)
 colnames(movies) <- c("movieId", "title", "genres")
 movies <- movies %>%
   mutate(movieId = as.integer(movieId))
 
-movielens <- left_join(ratings, movies, by = "movieId")
+#ADDED RELEASE YEAR and time since release to time of rating to both sets
+movielens <- left_join(ratings, movies, by = "movieId") %>%
+  mutate(release_year = as.numeric(str_sub(title,-5,-2)),
+         years_since = ifelse(year(timestamp) - release_year <= 0, 0, year(timestamp) - release_year))
 
 # Final hold-out test set will be 10% of MovieLens data
 set.seed(1, sample.kind="Rounding") # if using R 3.6 or later
@@ -76,12 +85,12 @@ rm(dl, ratings, movies, test_index, temp, movielens, removed, movies_file, ratin
 # library(tidyverse)
 # library(caret)
 # 
- #write_csv(edx, "./MainData.csv")
- #write_csv(final_holdout_test, "./FinalHoldout.csv")
+# write_csv(edx, "./MainData.csv")
+# write_csv(final_holdout_test, "./FinalHoldout.csv")
 # 
 # #read the datasets
- edx <- read.csv("./MainData.csv")
-# #final_holdout_test <- read.csv("./FinalHoldout.csv")
+ # edx <- read.csv("./MainData.csv")
+# final_holdout_test <- read.csv("./FinalHoldout.csv")
 # #--------------------------------------------------------------------#
 
 
@@ -89,15 +98,37 @@ set.seed(2006)
 indexes <- split(1:nrow(edx), edx$userId) #creates sets for each user
 test_ind <- sapply(indexes, function(ind) sample(ind, ceiling(length(ind)*.2))) %>%
   unlist(use.names = TRUE) %>% sort()  #takes 20% from each user for testing set
-testing <- edx[test_ind,]
+
 training <- edx[-test_ind,]
+temp <- edx[test_ind,]
 
-
-#making sure both training and test sets have the same movieids
-training <- training %>%
-  semi_join(testing, by = "movieId")
-testing <- testing %>%
+# Make sure same movieId in testing and training
+testing <- temp %>% 
   semi_join(training, by = "movieId")
+
+# Add rows removed from final hold-out test set back into edx set
+removed <- anti_join(temp, testing)
+training <- rbind(training, removed)
+
+# temp2 <- anti_join(training, testing, by = "movieId") 
+# removed2 <- anti_join(temp2, training)
+# testing <- rbind(testing, removed2)
+
+# testing <- edx[test_ind,]
+# training <- edx[-test_ind,]
+
+
+#Years since release date for ones with over 100 ratings
+training %>% group_by(years_since) %>% filter(n() > 100)%>%
+  summarise(mean = mean(rating)) %>% ggplot(aes(years_since,mean)) +geom_point() +geom_smooth(span = 0.5, se = FALSE)
+
+
+# 
+# #making sure both training and test sets have the same movieids
+# training <- training %>%
+#   semi_join(testing, by = "movieId")
+# testing <- testing %>%
+#   semi_join(training, by = "movieId") 
 
 #dummy coding, takes a few min for each
 #training <- cSplit_e(training, "genres", "|", type = "character", fill = 0, drop = F)
@@ -116,7 +147,7 @@ mu
 RMSE(testing$rating, mu)
 
 #basic model using avg rating for the movie
-#RMSE 0.9441609
+#RMSE 0.94
 avg_ratings_by_movie <- training %>% group_by(movieId) %>% 
   summarize(b_i = mean(rating) - mu,
             n = n(),
@@ -126,7 +157,7 @@ inner_join(testing,avg_ratings_by_movie, by = 'movieId') %>%
 
 
 #basic model using avg rating by user
-#RMSE 0.9790784
+#RMSE 0.98
 avg_ratings_by_user <- training %>% group_by(userId) %>% 
   summarize(b_u = mean(rating) - mu,
             n = n(),
@@ -134,8 +165,26 @@ avg_ratings_by_user <- training %>% group_by(userId) %>%
 inner_join(testing, avg_ratings_by_user, by = 'userId') %>% 
   summarize(RMSE = RMSE(rating, b_u + mu)) 
 
+#basic model using avg rating by genre groups
+#RMSE 1.02
+avg_ratings_by_genre <- training %>% group_by(genres) %>% 
+  summarize(b_g = mean(rating) - mu,
+            n = n(),
+            sums = sum(rating - mu))
+inner_join(testing, avg_ratings_by_genre, by = 'genres') %>% 
+  summarize(RMSE = RMSE(rating, b_g + mu))
+
+
+#basic model using avg rating by release year
+# RSME 1.05
+avg_ratings_by_release_year <- training %>%
+  group_by(release_year) %>% 
+  summarize(n = n(),
+            sums = sum(rating - mu))
+
+
 #movie + user bias
-#RMSE 0.8866536
+#RMSE 0.887
 left_join(testing, avg_ratings_by_movie, by = "movieId") %>%
   left_join(avg_ratings_by_user, by = "userId") %>%
   mutate(pred = mu + b_i + b_u) %>% 
@@ -144,57 +193,218 @@ left_join(testing, avg_ratings_by_movie, by = "movieId") %>%
 
 #finding the best lambda for smoothing movie effect
 lambdas <- seq(0, 3, 0.05)
-avg_ratings_by_movie$b_i_reg = 0
 rmses <- sapply(lambdas, function(lambda){
-  avg_ratings_by_movie$b_i_reg <- avg_ratings_by_movie$sums / (avg_ratings_by_movie$n + lambda)
-  left_join(testing, avg_ratings_by_movie, by = "movieId") %>% mutate(pred = mu + b_i_reg) %>% 
+  avg_ratings_by_movie$b_i <- avg_ratings_by_movie$sums / (avg_ratings_by_movie$n + lambda)
+  left_join(testing, avg_ratings_by_movie, by = "movieId") %>% mutate(pred = mu + b_i) %>% 
     summarize(rmse = RMSE(rating, pred)) %>%
     pull(rmse)
 })
 #regularized movie effect
 #best lambda 2
 qplot(lambdas, rmses, geom = "line")
-lambda <- lambdas[which.min(rmses)]
-print(lambda)
-avg_ratings_by_movie$b_i_reg <- avg_ratings_by_movie$sums / (avg_ratings_by_movie$n + lambda)
+lambda_i <- lambdas[which.min(rmses)]
+print(lambda_i)
+avg_ratings_by_movie$b_i <- avg_ratings_by_movie$sums / (avg_ratings_by_movie$n + lambda_i)
+training_reg <- left_join(training,avg_ratings_by_movie, by = "movieId") %>%
+  select(-n,-sums)
 
-#HERE--------------------
 
 #adjust b_u to new b_i
-avg_ratings_by_user2 <- left_join(training, avg_ratings_by_movie, by = "movieId") %>%
-                                   group_by(userId) %>% 
-                                   summarize(b_u = mean(rating) - mu - first(b_i_reg))
+avg_ratings_by_user <- training_reg %>%
+  mutate(x = rating - mu - b_i) %>%
+  group_by(userId) %>% 
+  summarize(b_u = mean(x),
+            n = n(),
+            sums = sum(x))
 
 #reg movie + user effect effect
-#RMSE 0.8863579
-user_movie_model <- left_join(testing, avg_ratings_by_movie, by = "movieId") 
-gc() #frees up memory for next command, takes a couple min
+#RMSE 0.867
+user_movie_model <- left_join(testing, avg_ratings_by_movie, by = "movieId")
+#gc() #frees up memory for next command, takes a couple min
 left_join(user_movie_model, avg_ratings_by_user, by = "userId") %>% 
-  mutate(pred = mu + b_i_reg + b_u) %>%
+  mutate(pred = mu + b_i + b_u) %>%
   summarize(rmse = RMSE(rating, pred))
 
 
 
-lambdas <- seq(3, 6, 0.05)
-avg_ratings_by_user$b_u_reg = 0
+lambdas <- seq(3, 7, 0.25)
+#avg_ratings_by_user$b_u = 0
 rmses <- sapply(lambdas, function(lambda){
-  avg_ratings_by_user$b_u_reg <- avg_ratings_by_user$sums / (avg_ratings_by_user$n + lambda)
-  left_join(testing, avg_ratings_by_user, by = "userId") %>% mutate(pred = mu + b_u_reg) %>% 
+  avg_ratings_by_user$b_u <- avg_ratings_by_user$sums / (avg_ratings_by_user$n + lambda)
+  left_join(testing, avg_ratings_by_user, by = "userId") %>%
+    left_join(avg_ratings_by_movie, by = "movieId") %>%
+    mutate(pred = mu + b_u + b_i) %>% 
     summarize(rmse = RMSE(rating, pred)) %>%
     pull(rmse)
 })
-#regularized movie effect
-#best lambda 5.4
+#regularized user effect
+#best lambda 4.75
 qplot(lambdas, rmses, geom = "line")
-lambda <- lambdas[which.min(rmses)]
-print(lambda)
-avg_ratings_by_user$b_u_reg <- avg_ratings_by_user$sums / (avg_ratings_by_user$n + lambda)
-#RMSE 0.8842069
+lambda_u <- lambdas[which.min(rmses)]
+print(lambda_u)
+avg_ratings_by_user$b_u <- avg_ratings_by_user$sums / (avg_ratings_by_user$n + lambda_u)
+#RMSE 0.866698
 left_join(user_movie_model, avg_ratings_by_user, by = "userId") %>% 
-  mutate(pred = mu + b_i_reg + b_u_reg) %>%
+  mutate(pred = mu + b_i + b_u) %>%
   summarize(rmse = RMSE(rating, pred))
 
+training_reg <- left_join(training_reg, avg_ratings_by_user, by = "userId") %>%
+  select(-n,-sums)
 
+
+#adj genres for bi&bu before regularization
+avg_ratings_by_genre <- training_reg %>%
+  mutate(x = rating - mu - b_i - b_u) %>%
+  group_by(genres) %>% 
+  summarize(n = n(),
+            sums = sum(x))
+
+lambdas <- seq(24, 28, 0.25)
+rmses <- sapply(lambdas, function(lambda){
+  avg_ratings_by_genre$b_g <- avg_ratings_by_genre$sums / (avg_ratings_by_genre$n + lambda)
+  left_join(testing, avg_ratings_by_genre, by = "genres") %>%
+    left_join(avg_ratings_by_movie, by = "movieId") %>% 
+    left_join(avg_ratings_by_user, by = "userId") %>%
+    mutate(pred = mu + b_u + b_i + b_g) %>% 
+    summarize(rmse = RMSE(rating, pred)) %>%
+    pull(rmse)
+})
+#regularized genre groups effect
+qplot(lambdas, rmses, geom = "line")
+lambda_g <- lambdas[which.min(rmses)]
+print(lambda_g)
+avg_ratings_by_genre$b_g <- avg_ratings_by_genre$sums / (avg_ratings_by_genre$n + lambda_g)
+#RMSE 0.86
+left_join(training_reg, avg_ratings_by_genre, by = "genres") %>% 
+  mutate(pred = mu + b_i + b_u + b_g) %>%
+  summarize(rmse = RMSE(rating, pred))
+
+training_reg <- left_join(training_reg, avg_ratings_by_genre, by = "genres") %>%
+  select(-n,-sums)
+
+
+
+#adj genres for bi&bu before regularization
+avg_ratings_by_release_year <- training_reg %>%
+  mutate(x = rating - mu - b_i - b_u - b_g) %>%
+  group_by(release_year) %>% 
+  summarize(n = n(),
+            sums = sum(x))
+
+lambdas <- seq(-18, -14, .25)
+rmses <- sapply(lambdas, function(lambda){
+  avg_ratings_by_release_year$b_r <- avg_ratings_by_release_year$sums / (avg_ratings_by_release_year$n + lambda)
+  left_join(testing, avg_ratings_by_release_year, by = "release_year") %>%
+    left_join(avg_ratings_by_movie, by = "movieId") %>% 
+    left_join(avg_ratings_by_user, by = "userId") %>% 
+    left_join(avg_ratings_by_genre, by = "genres") %>%
+    mutate(pred = mu + b_u + b_i + b_g + b_r) %>% 
+    summarize(rmse = RMSE(rating, pred)) %>%
+    pull(rmse)
+})
+#regularized release year effect
+#best lambda -0.5
+qplot(lambdas, rmses, geom = "line")
+lambda_r <- lambdas[which.min(rmses)]
+print(lambda_r)
+avg_ratings_by_release_year$b_r <- avg_ratings_by_release_year$sums / (avg_ratings_by_release_year$n + lambda_r)
+#RMSE 0.8554427
+left_join(training_reg, avg_ratings_by_release_year, by = "release_year") %>% 
+  mutate(pred = mu + b_i + b_u + b_g + b_r) %>%
+  summarize(rmse = RMSE(rating, pred))
+
+training_reg <- left_join(training_reg, avg_ratings_by_release_year, by = "release_year") %>%
+  select(-n,-sums)
+
+
+
+#adj genres for bi&bu before regularization
+avg_ratings_by_rating_time <- training_reg %>%
+  mutate(x = rating - mu - b_i - b_u - b_g - b_r) %>%
+  group_by(years_since) %>% 
+  summarize(n = n(),
+            sums = sum(x))
+
+lambdas <- seq(99, 102, 0.25)
+rmses <- sapply(lambdas, function(lambda){
+  avg_ratings_by_rating_time$b_y <- avg_ratings_by_rating_time$sums / (avg_ratings_by_rating_time$n + lambda)
+  left_join(testing, avg_ratings_by_rating_time, by = "years_since") %>%
+    left_join(avg_ratings_by_movie, by = "movieId") %>% 
+    left_join(avg_ratings_by_user, by = "userId") %>% 
+    left_join(avg_ratings_by_genre, by = "genres") %>%
+    left_join(avg_ratings_by_release_year, by = "release_year") %>%
+    mutate(pred = mu + b_u + b_i + b_g + b_r + b_y) %>% 
+    summarize(rmse = RMSE(rating, pred)) %>%
+    pull(rmse)
+})
+#regularized release year effect
+#best lambda -0.5
+qplot(lambdas, rmses, geom = "line")
+lambda_y <- lambdas[which.min(rmses)]
+print(lambda_y)
+avg_ratings_by_rating_time$b_y <- avg_ratings_by_rating_time$sums / (avg_ratings_by_rating_time$n + lambda_y)
+
+
+
+
+
+#NEED TO REDO WITH THE FULL EDX set 
+#----------------------final check--------------------------
+
+
+x <- left_join(final_holdout_test, avg_ratings_by_movie, by = "movieId") %>%
+  select(-n,-sums) %>%
+  left_join(avg_ratings_by_user, by = "userId") %>%
+  select(-n,-sums) %>%
+  left_join(avg_ratings_by_genre, by = "genres") %>%
+  select(-n,-sums) %>%
+  left_join(avg_ratings_by_release_year, by  = "release_year") %>%
+  select(-n,-sums) %>%
+  left_join(avg_ratings_by_rating_time, by  = "years_since") %>%
+  select(-n,-sums) %>%
+  mutate(pred = mu + b_i + b_u + b_g + b_r + b_y) 
+
+x %>% summarize(RMSE(rating, pred))
+
+
+
+
+
+
+
+#--------------HERE------------------------------
+
+#dummy coding, takes a few min for each
+dummy_training <- cSplit_e(training, "genres", "|", type = "character", fill = 0, drop = F)
+dummy_testing <- cSplit_e(testing, "genres", "|", type = "character", fill = 0, drop = F)
+
+
+
+#genre groups
+avg_ratings_by_genre_group <- dummy_training %>% 
+  group_by(genres) %>% 
+  summarize(b_g = mean(rating-mu),
+            n=n(),
+            sums = sum(rating-mu)) #%>% arrange(desc(n))
+#regularizing
+lambdas <- seq(2, 5, 0.05)
+avg_ratings_by_genre_group$b_g_reg = 0
+rmses <- sapply(lambdas, function(lambda){
+  avg_ratings_by_genre_group$b_g_reg <- avg_ratings_by_genre_group$sums / (avg_ratings_by_genre_group$n + lambda)
+  left_join(testing, avg_ratings_by_genre_group, by = "genres") %>% mutate(pred = mu + b_g_reg) %>% 
+    summarize(rmse = RMSE(rating, pred)) %>%
+    pull(rmse)
+})
+#regularized genre effect
+#best lambda 3.75
+qplot(lambdas, rmses, geom = "line")
+lambda_g <- lambdas[which.min(rmses)]
+print(lambda_g)
+avg_ratings_by_genre_group <- avg_ratings_by_genre_group 
+avg_ratings_by_genre_group$b_g_reg <- avg_ratings_by_genre_group$sums / (avg_ratings_by_genre_group$n + lambda_g)
+
+combo_model <- left_join(user_movie_model, avg_ratings_by_user, by = "userId") %>% 
+  left_join(avg_ratings_by_genre_group, by = "genres")
 
 #-------------------------------------------------
 
@@ -320,6 +530,8 @@ left_join(test_set, fit_movies, by = "movieId") %>%
 
 #------------------
 # # Kamila method
+# # https://www.nature.com/articles/s41598-021-83340-8
+# # https://cran.r-universe.dev/kamila/doc/manual.html
 # # 
 set.seed(52)
 kamind <- createDataPartition(edx$userId, p = 0.7, list = FALSE)
