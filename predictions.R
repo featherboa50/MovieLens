@@ -92,12 +92,40 @@ rm(dl, ratings, movies, test_index, temp, movielens, removed, movies_file, ratin
  # edx <- read.csv("./MainData.csv")
 # final_holdout_test <- read.csv("./FinalHoldout.csv")
 # #--------------------------------------------------------------------#
+#----------Exploring Data----------------------
 
 
+# of movies
+n_distinct(edx$movieId)
+# of users
+n_distinct(edx$userId)
+
+
+# frequency of user rating
+edx %>% count(userId) %>% 
+  ggplot(aes(n)) + geom_histogram() +
+  labs(x = "Number of users", y = "Frequency of ratings") +
+  xlim(0,3000) + scale_y_log10()
+
+# frequency of movie rating
+edx %>% count(movieId) %>% 
+  ggplot(aes(n)) + geom_histogram() +
+  labs(x = "Number of movies", y = "Frequency of ratings") +
+  scale_y_log10()
+
+#Years since release date for years with over 1000 ratings
+edx %>% group_by(years_since) %>% 
+  filter(n() > 1000)%>%
+  summarise(mean = mean(rating)) %>%
+  ggplot(aes(years_since,mean)) +geom_point() +geom_smooth(span = 0.5, se = FALSE)
+
+
+
+#creates sets of each user and then takes 20% of each user for testing
 set.seed(2006)
-indexes <- split(1:nrow(edx), edx$userId) #creates sets for each user
+indexes <- split(1:nrow(edx), edx$userId)
 test_ind <- sapply(indexes, function(ind) sample(ind, ceiling(length(ind)*.2))) %>%
-  unlist(use.names = TRUE) %>% sort()  #takes 20% from each user for testing set
+  unlist(use.names = TRUE) %>% sort()
 
 training <- edx[-test_ind,]
 temp <- edx[test_ind,]
@@ -110,29 +138,6 @@ testing <- temp %>%
 removed <- anti_join(temp, testing)
 training <- rbind(training, removed)
 
-# temp2 <- anti_join(training, testing, by = "movieId") 
-# removed2 <- anti_join(temp2, training)
-# testing <- rbind(testing, removed2)
-
-# testing <- edx[test_ind,]
-# training <- edx[-test_ind,]
-
-
-#Years since release date for ones with over 100 ratings
-training %>% group_by(years_since) %>% filter(n() > 100)%>%
-  summarise(mean = mean(rating)) %>% ggplot(aes(years_since,mean)) +geom_point() +geom_smooth(span = 0.5, se = FALSE)
-
-
-# 
-# #making sure both training and test sets have the same movieids
-# training <- training %>%
-#   semi_join(testing, by = "movieId")
-# testing <- testing %>%
-#   semi_join(training, by = "movieId") 
-
-#dummy coding, takes a few min for each
-#training <- cSplit_e(training, "genres", "|", type = "character", fill = 0, drop = F)
-#testing <- cSplit_e(testing, "genres", "|", type = "character", fill = 0, drop = F)
 
 #root mean squared error
 RMSE <- function(true_ratings, predicted_ratings){
@@ -140,14 +145,11 @@ RMSE <- function(true_ratings, predicted_ratings){
 }
 
 #base model using the avg for all ratings
-#3.512043
-#RMSE 1.060369
 mu <- training %>% summarize(m = mean(rating)) %>% pull(m)
 mu
 RMSE(testing$rating, mu)
 
 #basic model using avg rating for the movie
-#RMSE 0.94
 avg_ratings_by_movie <- training %>% group_by(movieId) %>% 
   summarize(b_i = mean(rating) - mu,
             n = n(),
@@ -166,7 +168,6 @@ inner_join(testing, avg_ratings_by_user, by = 'userId') %>%
   summarize(RMSE = RMSE(rating, b_u + mu)) 
 
 #basic model using avg rating by genre groups
-#RMSE 1.02
 avg_ratings_by_genre <- training %>% group_by(genres) %>% 
   summarize(b_g = mean(rating) - mu,
             n = n(),
@@ -176,7 +177,6 @@ inner_join(testing, avg_ratings_by_genre, by = 'genres') %>%
 
 
 #basic model using avg rating by release year
-# RSME 1.05
 avg_ratings_by_release_year <- training %>%
   group_by(release_year) %>% 
   summarize(n = n(),
@@ -184,7 +184,6 @@ avg_ratings_by_release_year <- training %>%
 
 
 #movie + user bias
-#RMSE 0.887
 left_join(testing, avg_ratings_by_movie, by = "movieId") %>%
   left_join(avg_ratings_by_user, by = "userId") %>%
   mutate(pred = mu + b_i + b_u) %>% 
@@ -199,17 +198,17 @@ rmses <- sapply(lambdas, function(lambda){
     summarize(rmse = RMSE(rating, pred)) %>%
     pull(rmse)
 })
-#regularized movie effect
-#best lambda 2
+#plot regularized movie effect
 qplot(lambdas, rmses, geom = "line")
 lambda_i <- lambdas[which.min(rmses)]
 print(lambda_i)
 avg_ratings_by_movie$b_i <- avg_ratings_by_movie$sums / (avg_ratings_by_movie$n + lambda_i)
+#training_reg used to keep track of the b_[] for future regulation formulas
 training_reg <- left_join(training,avg_ratings_by_movie, by = "movieId") %>%
   select(-n,-sums)
 
 
-#adjust b_u to new b_i
+#adjust b_u to reg. b_i
 avg_ratings_by_user <- training_reg %>%
   mutate(x = rating - mu - b_i) %>%
   group_by(userId) %>% 
@@ -218,7 +217,6 @@ avg_ratings_by_user <- training_reg %>%
             sums = sum(x))
 
 #reg movie + user effect effect
-#RMSE 0.867
 user_movie_model <- left_join(testing, avg_ratings_by_movie, by = "movieId")
 #gc() #frees up memory for next command, takes a couple min
 left_join(user_movie_model, avg_ratings_by_user, by = "userId") %>% 
@@ -226,9 +224,8 @@ left_join(user_movie_model, avg_ratings_by_user, by = "userId") %>%
   summarize(rmse = RMSE(rating, pred))
 
 
-
+#regularize for users
 lambdas <- seq(3, 7, 0.25)
-#avg_ratings_by_user$b_u = 0
 rmses <- sapply(lambdas, function(lambda){
   avg_ratings_by_user$b_u <- avg_ratings_by_user$sums / (avg_ratings_by_user$n + lambda)
   left_join(testing, avg_ratings_by_user, by = "userId") %>%
@@ -237,17 +234,10 @@ rmses <- sapply(lambdas, function(lambda){
     summarize(rmse = RMSE(rating, pred)) %>%
     pull(rmse)
 })
-#regularized user effect
-#best lambda 4.75
 qplot(lambdas, rmses, geom = "line")
 lambda_u <- lambdas[which.min(rmses)]
 print(lambda_u)
 avg_ratings_by_user$b_u <- avg_ratings_by_user$sums / (avg_ratings_by_user$n + lambda_u)
-#RMSE 0.866698
-left_join(user_movie_model, avg_ratings_by_user, by = "userId") %>% 
-  mutate(pred = mu + b_i + b_u) %>%
-  summarize(rmse = RMSE(rating, pred))
-
 training_reg <- left_join(training_reg, avg_ratings_by_user, by = "userId") %>%
   select(-n,-sums)
 
@@ -258,7 +248,7 @@ avg_ratings_by_genre <- training_reg %>%
   group_by(genres) %>% 
   summarize(n = n(),
             sums = sum(x))
-
+#regularize for genres
 lambdas <- seq(24, 28, 0.25)
 rmses <- sapply(lambdas, function(lambda){
   avg_ratings_by_genre$b_g <- avg_ratings_by_genre$sums / (avg_ratings_by_genre$n + lambda)
@@ -274,23 +264,18 @@ qplot(lambdas, rmses, geom = "line")
 lambda_g <- lambdas[which.min(rmses)]
 print(lambda_g)
 avg_ratings_by_genre$b_g <- avg_ratings_by_genre$sums / (avg_ratings_by_genre$n + lambda_g)
-#RMSE 0.86
-left_join(training_reg, avg_ratings_by_genre, by = "genres") %>% 
-  mutate(pred = mu + b_i + b_u + b_g) %>%
-  summarize(rmse = RMSE(rating, pred))
-
 training_reg <- left_join(training_reg, avg_ratings_by_genre, by = "genres") %>%
   select(-n,-sums)
 
 
 
-#adj genres for bi&bu before regularization
+#adj genres for all previous b_[] before regularization
 avg_ratings_by_release_year <- training_reg %>%
   mutate(x = rating - mu - b_i - b_u - b_g) %>%
   group_by(release_year) %>% 
   summarize(n = n(),
             sums = sum(x))
-
+#regularize for release year
 lambdas <- seq(-18, -14, .25)
 rmses <- sapply(lambdas, function(lambda){
   avg_ratings_by_release_year$b_r <- avg_ratings_by_release_year$sums / (avg_ratings_by_release_year$n + lambda)
@@ -303,22 +288,16 @@ rmses <- sapply(lambdas, function(lambda){
     pull(rmse)
 })
 #regularized release year effect
-#best lambda -0.5
 qplot(lambdas, rmses, geom = "line")
 lambda_r <- lambdas[which.min(rmses)]
 print(lambda_r)
 avg_ratings_by_release_year$b_r <- avg_ratings_by_release_year$sums / (avg_ratings_by_release_year$n + lambda_r)
-#RMSE 0.8554427
-left_join(training_reg, avg_ratings_by_release_year, by = "release_year") %>% 
-  mutate(pred = mu + b_i + b_u + b_g + b_r) %>%
-  summarize(rmse = RMSE(rating, pred))
-
 training_reg <- left_join(training_reg, avg_ratings_by_release_year, by = "release_year") %>%
   select(-n,-sums)
 
 
 
-#adj genres for bi&bu before regularization
+#adj years between rating and release 
 avg_ratings_by_rating_time <- training_reg %>%
   mutate(x = rating - mu - b_i - b_u - b_g - b_r) %>%
   group_by(years_since) %>% 
@@ -337,8 +316,7 @@ rmses <- sapply(lambdas, function(lambda){
     summarize(rmse = RMSE(rating, pred)) %>%
     pull(rmse)
 })
-#regularized release year effect
-#best lambda -0.5
+#regularized years since release effect
 qplot(lambdas, rmses, geom = "line")
 lambda_y <- lambdas[which.min(rmses)]
 print(lambda_y)
@@ -348,11 +326,11 @@ avg_ratings_by_rating_time$b_y <- avg_ratings_by_rating_time$sums / (avg_ratings
 
 
 
-#NEED TO REDO WITH THE FULL EDX set 
+ 
 #----------------------final check--------------------------
 
 
-x <- left_join(final_holdout_test, avg_ratings_by_movie, by = "movieId") %>%
+left_join(final_holdout_test, avg_ratings_by_movie, by = "movieId") %>%
   select(-n,-sums) %>%
   left_join(avg_ratings_by_user, by = "userId") %>%
   select(-n,-sums) %>%
@@ -362,177 +340,57 @@ x <- left_join(final_holdout_test, avg_ratings_by_movie, by = "movieId") %>%
   select(-n,-sums) %>%
   left_join(avg_ratings_by_rating_time, by  = "years_since") %>%
   select(-n,-sums) %>%
-  mutate(pred = mu + b_i + b_u + b_g + b_r + b_y) 
-
-x %>% summarize(RMSE(rating, pred))
-
+  mutate(pred = mu + b_i + b_u + b_g + b_r + b_y) %>%
+  summarize(RMSE(rating, pred))
 
 
 
 
+#--------Less successful methods-------------------
+#-------Most of these will take forever to run, none beat the methods above.
 
-
-#--------------HERE------------------------------
-
-#dummy coding, takes a few min for each
-dummy_training <- cSplit_e(training, "genres", "|", type = "character", fill = 0, drop = F)
-dummy_testing <- cSplit_e(testing, "genres", "|", type = "character", fill = 0, drop = F)
-
-
-
-#genre groups
-avg_ratings_by_genre_group <- dummy_training %>% 
-  group_by(genres) %>% 
-  summarize(b_g = mean(rating-mu),
-            n=n(),
-            sums = sum(rating-mu)) #%>% arrange(desc(n))
-#regularizing
-lambdas <- seq(2, 5, 0.05)
-avg_ratings_by_genre_group$b_g_reg = 0
-rmses <- sapply(lambdas, function(lambda){
-  avg_ratings_by_genre_group$b_g_reg <- avg_ratings_by_genre_group$sums / (avg_ratings_by_genre_group$n + lambda)
-  left_join(testing, avg_ratings_by_genre_group, by = "genres") %>% mutate(pred = mu + b_g_reg) %>% 
-    summarize(rmse = RMSE(rating, pred)) %>%
-    pull(rmse)
-})
-#regularized genre effect
-#best lambda 3.75
-qplot(lambdas, rmses, geom = "line")
-lambda_g <- lambdas[which.min(rmses)]
-print(lambda_g)
-avg_ratings_by_genre_group <- avg_ratings_by_genre_group 
-avg_ratings_by_genre_group$b_g_reg <- avg_ratings_by_genre_group$sums / (avg_ratings_by_genre_group$n + lambda_g)
-
-combo_model <- left_join(user_movie_model, avg_ratings_by_user, by = "userId") %>% 
-  left_join(avg_ratings_by_genre_group, by = "genres")
-
-#-------------------------------------------------
-
-
-
-#cooking with gas
+# Trying out using recipes with caret
 my_recipe <- recipe(rating ~ ., data = training) %>%
   update_role(title, new_role = "ID") %>%
   update_role(genres, new_role = "ID")   #sets the title feature to be kept but not used for modeling
 #  step_dummy(genres, one_hot = TRUE)  #One Hot encoding the genres
-  
-  my_recipe
-  summary(my_recipe) 
 
+my_recipe
+summary(my_recipe)
+library(kernlab)
 
+# Support Vector Machine with Radial
+# runs for very long time
 set.seed(888)
-#RMSE .917 9:10
-start <- sys.time()
 train_svm <- train(my_recipe, training,
-                 method = "svmRadial", 
-                 metric = "wRMSE",
-                 maximize = FALSE,
-                 tuneLength = 10)
-end <- sys.time()
+                   method = "svmRadial", 
+                   metric = "wRMSE",
+                   maximize = FALSE,
+                   tuneLength = 10)
 train_svm
-#RMSE 1.09 example of overfitting
+#RMSE is higher so example of overfitting
 RMSE(predict(train_svm, testing), testing$rating)
-print(format(start, %H:%M) & " " & format(end, %H:%M))
 
 
-#RMSE .975
+
+#loess method
 b <- 5
 control <- trainControl(method = "cv", number = b, p = .9)
 train_Loess <- train(my_recipe, training,
-                 method = "gamLoess",
-                 #tuneGrid = data.frame(k = seq(1,60,2)),
-                 trControl = control)
-
-train_Loess
-RMSE(predict(train_Loess, minitest), minitest$rating)
-
-
-my_recipe2 <- my_recipe %>%
-  step_pca() 
-train_Loess2 <- train(my_recipe2, minitrain,
                      method = "gamLoess",
-                     tuneGrid = grid,
+                     #tuneGrid = data.frame(k = seq(1,60,2)),
                      trControl = control)
 
-train_Loess2
-RMSE(predict(train_Loess2, minitest), minitest$rating)
+train_Loess
+RMSE(predict(train_Loess, testing), testing$rating)
 
-
-fit.treebag <- train(full_recipe, training,
-                      method = "treebag",
-                     # tuneGrid = data.frame(k = seq(1,60,2)),
-                      trControl = control)
-fit.rf <- train(full_recipe,training, method="rf", trControl=control)
-bagging_results <- resamples(list(treebag=fit.treebag, rf=fit.rf))
-summary(bagging_results)
-RMSE(predict(fit.rf, minitest), minitest$rating)
-
-
-  
-minitrain %>% mutate(pred = mu + b_i + b_u) %>% 
-    summarize(rmse = RMSE(rating, pred))
-#gower
-ames_full <- minitrain %>%
-  mutate_if(str_detect(names(.), 'Qual|Cond|QC|Qu'), as.numeric)
-
-# One-hot encode --> retain only the features and not sale price
-full_rank  <- caret::dummyVars(rating ~ . - title, data = minitrain_dummy, 
-                               fullRank = TRUE)
-ames_1hot <- predict(full_rank, minitrain_dummy)
-
-# Scale data
-ames_1hot_scaled <- scale(ames_1hot)
-
-# New dimensions
-dim(ames_1hot_scaled)
-## [1] 2930  240
-gower_dst <- daisy(minitrain, metric = "gower")
-
-train_knn_2$bestTune
-plot(train_knn_2)
-RMSE(predict(train_knn_2, minitest), minitest$rating)
-
-#One is using Bayesian Average. Two is using bias or lambda that I learned in Chapter 33.7.5 or Section 6 of the Machine Learning.  I applied bias 3 different ways: userId, movieId and rating.  I did not use a matrix.  
-
-
-
-
-
-
-
-y <- select(train_set, movieId, userId, rating) %>%
-  pivot_wider(names_from = movieId, values_from = rating) 
-rnames <- y$userId
-y <- as.matrix(y[,-1])
-rownames(y) <- rnames
-movie_map <- train_set %>% select(movieId, title) %>% distinct(movieId, .keep_all = TRUE)
-
-naive_rmse <- RMSE(test_set$rating, mu)
-naive_rmse
-#movie bias
-b_i <- colMeans(y - mu, na.rm = TRUE)
-qplot(b_i, bins = 10, color = I("black"))
-fit_movies <- data.frame(movieId = as.integer(colnames(y)), 
-                         mu = mu, b_i = b_i)
-left_join(test_set, fit_movies, by = "movieId") %>% 
-  mutate(pred = mu + b_i) %>% 
-  summarize(rmse = RMSE(rating, pred))
-#user bias
-b_u <- rowMeans(sweep(y - mu, 2, b_i), na.rm = TRUE)
-fit_users <- data.frame(userId = as.integer(rownames(y)), b_u = b_u)
-#combining user and movie bias
-left_join(test_set, fit_movies, by = "movieId") %>% 
-  left_join(fit_users, by = "userId") %>% 
-  mutate(pred = mu + b_i + b_u) %>% 
-  summarize(rmse = RMSE(rating, pred))
 
 
 
 #------------------
-# # Kamila method
-# # https://www.nature.com/articles/s41598-021-83340-8
-# # https://cran.r-universe.dev/kamila/doc/manual.html
-# # 
+# # Kamila method, ran for 15-30 min on my device and pushed memory limits but is possible
+# # supposed to be good for lots of categorical data (genres) with better performance. 
+# # But it did not beat regularized data above
 set.seed(52)
 kamind <- createDataPartition(edx$userId, p = 0.7, list = FALSE)
 kamtrain <- edx[kamind,]
@@ -546,13 +404,13 @@ kamtrain <- kamtrain %>%
   semi_join(kamtest, by = "movieId") %>%
   mutate(release_year = as.numeric(str_sub(title,-5,-2)))
 
+#creates dummy variables for each genre
 kamtrain_dummy <- cSplit_e(kamtrain, "genres", "|", type = "character", fill = 0, drop = F)
 kamtest_dummy <- cSplit_e(kamtest, "genres", "|", type = "character", fill = 0, drop = F)
 
-#continous variables
+#continous variables (numbers)
 conInd <- c(4,7)
 conVars <- kamtrain[,conInd]
-#conVars <- data.frame(scale(conVars))
 conTest <- kamtest[,conInd]
 
 #categorical variables
@@ -561,12 +419,13 @@ catInd2 <- c(1,2,6) #genre groups in tact
 catVarsFac <- kamtrain_dummy[,catInd]
 catVarsFac[] <- lapply(catVarsFac, factor)
 catVar2 <- data.frame(lapply(kamtrain[,catInd2],as.factor))
-#catVarsDum <- dummyCodeFactorDf(catVar2)
 
+
+#make sure cat variables are factors
 catTestFac <- kamtrain_dummy[,catInd]
 catTestFac[] <- lapply(catTestFac, factor)
 catTest2 <- data.frame(lapply(kamtest[,catInd2],as.factor))
-#catTestDum <- dummyCodeFactorDf(testcatVarsFac)
+
 
 
 
@@ -596,5 +455,3 @@ rm(kamtest, kamtest_dummy, kamtrain, kamtrain_dummy,
    testcatVarsFac, kamind, kamRes, catVarsFac, conTest, conVars)
 
 # #-------------------
-
-
